@@ -660,8 +660,8 @@ func initModelTable() {
 	}
 	ex := uintptr(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER)
 	send(listModels, LVM_SETEXTENDEDLISTVIEWSTYLE, ex, ex)
-	send(listModels, LVM_SETBKCOLOR, 0, uintptr(rgb(25, 33, 56)))
-	send(listModels, LVM_SETTEXTBKCOLOR, 0, uintptr(rgb(25, 33, 56)))
+	send(listModels, LVM_SETBKCOLOR, 0, uintptr(rgb(22, 24, 28)))
+	send(listModels, LVM_SETTEXTBKCOLOR, 0, uintptr(rgb(22, 24, 28)))
 	send(listModels, LVM_SETTEXTCOLOR, 0, uintptr(rgb(222, 232, 248)))
 	updateModelSortIndicator()
 }
@@ -1126,9 +1126,9 @@ func fillRound(hdc syscall.Handle, r RECT, color uint32, radius int32) {
 }
 func drawPanel(hdc syscall.Handle, r RECT) {
 	shadow := RECT{r.Left + 4, r.Top + 5, r.Right + 4, r.Bottom + 5}
-	fillRound(hdc, shadow, rgb(5, 8, 20), 18)
-	fillRound(hdc, r, rgb(20, 27, 48), 18)
-	pen, _, _ := pCreatePen.Call(PS_SOLID, 1, uintptr(rgb(55, 70, 106)))
+	fillRound(hdc, shadow, rgb(10, 10, 12), 18)
+	fillRound(hdc, r, rgb(30, 32, 36), 18)
+	pen, _, _ := pCreatePen.Call(PS_SOLID, 1, uintptr(rgb(48, 52, 58)))
 	old, _, _ := pSelectObject.Call(uintptr(hdc), pen)
 	hollow, _, _ := pGetStockObject.Call(HOLLOW_BRUSH)
 	oldb, _, _ := pSelectObject.Call(uintptr(hdc), hollow)
@@ -1311,13 +1311,13 @@ func paintWindow(hwnd syscall.Handle) {
 	}
 	defer pEndPaint.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&ps)))
 	r := RECT{0, 0, clientW, clientH}
-	gradientFillRect(syscall.Handle(hdc), r, rgb(9, 14, 29), rgb(18, 13, 38))
+	gradientFillRect(syscall.Handle(hdc), r, rgb(24, 25, 28), rgb(15, 16, 18))
 	header := RECT{0, 0, clientW, 92}
-	gradientFillRect(syscall.Handle(hdc), header, rgb(19, 48, 92), rgb(65, 25, 103))
+	gradientFillRect(syscall.Handle(hdc), header, rgb(32, 35, 40), rgb(22, 24, 28))
 	drawPanel(syscall.Handle(hdc), queuePanel)
 	drawPanel(syscall.Handle(hdc), settingsPanel)
 	drawPanel(syscall.Handle(hdc), actionPanel) // accent streak
-	pen, _, _ := pCreatePen.Call(PS_SOLID, 3, uintptr(rgb(61, 210, 255)))
+	pen, _, _ := pCreatePen.Call(PS_SOLID, 3, uintptr(rgb(46, 204, 113)))
 	old, _, _ := pSelectObject.Call(hdc, pen)
 	pMoveToEx.Call(hdc, 24, 86, 0)
 	pLineTo.Call(hdc, uintptr(clientW-24), 86)
@@ -1330,11 +1330,12 @@ func paintWindow(hwnd syscall.Handle) {
 	batchMu.Unlock()
 	if total > 0 && done >= 0 {
 		barRect := RECT{actionPanel.Left+20, actionPanel.Top+42, actionPanel.Right-20, actionPanel.Top+56}
-		gradientFillRect(syscall.Handle(hdc), barRect, rgb(30, 37, 59), rgb(20, 27, 48))
+		fillRound(syscall.Handle(hdc), barRect, rgb(38, 40, 44), 6) // Smooth rounded background
 		pw := (barRect.Right - barRect.Left) * int32(done) / int32(total)
-		if pw > 0 {
+		if pw > 10 {
 			progRect := RECT{barRect.Left, barRect.Top, barRect.Left + pw, barRect.Bottom}
-			gradientFillRect(syscall.Handle(hdc), progRect, rgb(64, 210, 255), rgb(21, 142, 237))
+			// Draw progress as a rounded rect
+			fillRound(syscall.Handle(hdc), progRect, rgb(46, 204, 113), 6)
 		}
 	}
 }
@@ -1368,11 +1369,11 @@ func wndProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
 		fontButton = makeFont(-17, 650)
 		fontSmall = makeFont(-15, 400)
 		fontBadge = makeFont(-15, 700)
-		b, _, _ := pCreateSolidBrush.Call(uintptr(rgb(20, 27, 48)))
+		b, _, _ := pCreateSolidBrush.Call(uintptr(rgb(30, 32, 36)))
 		brushPanel = syscall.Handle(b)
-		b, _, _ = pCreateSolidBrush.Call(uintptr(rgb(31, 39, 63)))
+		b, _, _ = pCreateSolidBrush.Call(uintptr(rgb(22, 24, 28)))
 		brushEdit = syscall.Handle(b)
-		b, _, _ = pCreateSolidBrush.Call(uintptr(rgb(25, 33, 56)))
+		b, _, _ = pCreateSolidBrush.Call(uintptr(rgb(22, 24, 28)))
 		brushList = syscall.Handle(b)
 		hb, _, _ := pGetStockObject.Call(HOLLOW_BRUSH)
 		brushTransparent = syscall.Handle(hb)
@@ -1466,7 +1467,7 @@ func wndProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
 		// so the previous string is completely erased before the new one is painted.
 		if child == lblQuality || child == status {
 			pSetBkMode.Call(uintptr(hdc), 2) // OPAQUE
-			pSetBkColor.Call(uintptr(hdc), uintptr(rgb(20, 27, 48)))
+			pSetBkColor.Call(uintptr(hdc), uintptr(rgb(30, 32, 36)))
 			return uintptr(brushPanel)
 		}
 		pSetBkMode.Call(uintptr(hdc), TRANSPARENT)
@@ -1474,12 +1475,12 @@ func wndProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
 	case WM_CTLCOLOREDIT:
 		hdc := syscall.Handle(wParam)
 		pSetTextColor.Call(uintptr(hdc), uintptr(rgb(231, 239, 252)))
-		pSetBkColor.Call(uintptr(hdc), uintptr(rgb(31, 39, 63)))
+		pSetBkColor.Call(uintptr(hdc), uintptr(rgb(22, 24, 28)))
 		return uintptr(brushEdit)
 	case WM_CTLCOLORLISTBOX:
 		hdc := syscall.Handle(wParam)
 		pSetTextColor.Call(uintptr(hdc), uintptr(rgb(222, 232, 248)))
-		pSetBkColor.Call(uintptr(hdc), uintptr(rgb(25, 33, 56)))
+		pSetBkColor.Call(uintptr(hdc), uintptr(rgb(22, 24, 28)))
 		return uintptr(brushList)
 	case WM_NOTIFY:
 		if lParam != 0 {
@@ -1585,7 +1586,7 @@ func gui() int {
 			return 1
 		}
 	}
-	title := w("OBJ2PNG Studio Pro v1.0.0")
+	title := w(fmt.Sprintf("%s v%s", appName, appVersion))
 	className2 := w("OBJ2PNGStudioProRelease")
 	style := uintptr(WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME)
 	h, _, _ := pCreateWindowExW.Call(0, uintptr(unsafe.Pointer(className2)), uintptr(unsafe.Pointer(title)), style, uintptr(CW_USEDEFAULT), uintptr(CW_USEDEFAULT), 1240, 860, 0, 0, inst, 0)
