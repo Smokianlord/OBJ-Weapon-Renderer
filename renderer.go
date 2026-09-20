@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type Vec3 struct{ X, Y, Z float64 }
@@ -331,6 +332,7 @@ func RenderOBJ(inPath, outPath string, opt RenderOptions) error {
 	fill := Vec3{0.6, -0.25, 0.55}.Norm()
 	rim := Vec3{-0.7, -0.35, 0.5}.Norm()
 	view := Vec3{0, 0, 1}
+	halfVec := key.Add(view).Norm()
 	base := float64(opt.BaseGray)
 	contrast := opt.Contrast
 	if contrast <= 0 {
@@ -404,8 +406,7 @@ func RenderOBJ(inPath, outPath string, opt RenderOptions) error {
 				d3 := math.Max(0, n.Dot(rim))
 				diffuse := 0.34 + 0.42*d1 + 0.15*d2 + 0.09*d3
 				// Small deterministic specular, capped to avoid white fireflies.
-				h := key.Add(view).Norm()
-				spec := math.Pow(math.Max(0, n.Dot(h)), 48) * 0.12
+				spec := math.Pow(math.Max(0, n.Dot(halfVec)), 48) * 0.12
 				lum := diffuse + spec
 				lum = (lum-0.5)*contrast + 0.5
 				if lum < 0.18 {
@@ -438,31 +439,49 @@ func RenderOBJ(inPath, outPath string, opt RenderOptions) error {
 		}
 	} else {
 		// Alpha-aware downsample so transparent edges do not get white/dark RGB contamination.
-		for y := 0; y < opt.Height; y++ {
-			for x := 0; x < opt.Width; x++ {
-				var sr, sg, sb, sa int
-				for yy := 0; yy < ss; yy++ {
-					for xx := 0; xx < ss; xx++ {
-						i := (((y*ss + yy) * W) + (x*ss + xx)) * 4
-						a := int(pix[i+3])
-						sa += a
-						sr += int(pix[i]) * a
-						sg += int(pix[i+1]) * a
-						sb += int(pix[i+2]) * a
+		var wg sync.WaitGroup
+		workers := 8
+		chunk := (opt.Height + workers - 1) / workers
+		for wk := 0; wk < workers; wk++ {
+			startY := wk * chunk
+			endY := startY + chunk
+			if endY > opt.Height {
+				endY = opt.Height
+			}
+			if startY >= endY {
+				continue
+			}
+			wg.Add(1)
+			go func(yStart, yEnd int) {
+				defer wg.Done()
+				for y := yStart; y < yEnd; y++ {
+					for x := 0; x < opt.Width; x++ {
+						var sr, sg, sb, sa int
+						for yy := 0; yy < ss; yy++ {
+							for xx := 0; xx < ss; xx++ {
+								i := (((y*ss + yy) * W) + (x*ss + xx)) * 4
+								a := int(pix[i+3])
+								sa += a
+								sr += int(pix[i]) * a
+								sg += int(pix[i+1]) * a
+								sb += int(pix[i+2]) * a
+							}
+						}
+						if sa == 0 {
+							out.SetNRGBA(x, y, color.NRGBA{0, 0, 0, 0})
+							continue
+						}
+						samples := ss * ss
+						aa := uint8((sa + samples/2) / samples)
+						rr := uint8(sr / sa)
+						gg := uint8(sg / sa)
+						bb := uint8(sb / sa)
+						out.SetNRGBA(x, y, color.NRGBA{rr, gg, bb, aa})
 					}
 				}
-				if sa == 0 {
-					out.SetNRGBA(x, y, color.NRGBA{0, 0, 0, 0})
-					continue
-				}
-				samples := ss * ss
-				aa := uint8((sa + samples/2) / samples)
-				rr := uint8(sr / sa)
-				gg := uint8(sg / sa)
-				bb := uint8(sb / sa)
-				out.SetNRGBA(x, y, color.NRGBA{rr, gg, bb, aa})
-			}
+			}(startY, endY)
 		}
+		wg.Wait()
 	}
 	f, err := os.Create(outPath)
 	if err != nil {

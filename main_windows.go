@@ -958,26 +958,70 @@ func startBatchRender() {
 	go func() {
 		started := time.Now()
 		r := BatchResult{Total: len(inputs)}
-		for i, in := range inputs {
-			if isCancelRequested() {
-				r.Cancelled = true
-				break
-			}
-			postBatchProgress(i, len(inputs), filepath.Base(in))
-			out := outputs[i]
-			if !overwrite {
-				if _, err := os.Stat(out); err == nil {
-					r.Skipped++
-					continue
-				}
-			}
-			if err := RenderOBJ(in, out, opt); err != nil {
-				r.Failed++
-				r.Errors = append(r.Errors, filepath.Base(in)+": "+err.Error())
-			} else {
-				r.Rendered++
-			}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		workers := runtime.NumCPU()
+		if workers < 1 {
+			workers = 1
 		}
+		if workers > len(inputs) {
+			workers = len(inputs)
+		}
+		
+		workCh := make(chan int, len(inputs))
+		for i := 0; i < len(inputs); i++ {
+			workCh <- i
+		}
+		close(workCh)
+		
+		var doneCount int
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range workCh {
+					if isCancelRequested() {
+						mu.Lock()
+						r.Cancelled = true
+						mu.Unlock()
+						return
+					}
+					in := inputs[i]
+					out := outputs[i]
+					
+					mu.Lock()
+					postBatchProgress(doneCount, len(inputs), filepath.Base(in))
+					mu.Unlock()
+					
+					var skip bool
+					if !overwrite {
+						if _, err := os.Stat(out); err == nil {
+							skip = true
+						}
+					}
+					
+					var err error
+					if !skip {
+						err = RenderOBJ(in, out, opt)
+					}
+					
+					mu.Lock()
+					doneCount++
+					if skip {
+						r.Skipped++
+					} else if err != nil {
+						r.Failed++
+						r.Errors = append(r.Errors, filepath.Base(in)+": "+err.Error())
+					} else {
+						r.Rendered++
+					}
+					postBatchProgress(doneCount, len(inputs), filepath.Base(in))
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		
 		r.Duration = time.Since(started)
 		batchMu.Lock()
 		batchResult = r
@@ -989,8 +1033,7 @@ func updateBatchProgress() {
 	batchMu.Lock()
 	done, total, current := batchProgressDone, batchProgressTotal, batchCurrent
 	batchMu.Unlock()
-	send(progress, PBM_SETRANGE32, 0, uintptr(total))
-	send(progress, PBM_SETPOS, uintptr(done), 0)
+	pInvalidateRect.Call(uintptr(hwndMain), 0, 1)
 	if total > 0 {
 		setText(status, fmt.Sprintf("Rendering %d/%d  -  %s", done+1, total, current))
 	}
@@ -1002,10 +1045,7 @@ func finishBatchRender() {
 	rendering = false
 	setCancel(false)
 	enableInputControls(true)
-	send(progress, PBM_SETRANGE32, 0, uintptr(r.Total))
-	if !r.Cancelled {
-		send(progress, PBM_SETPOS, uintptr(r.Total), 0)
-	}
+	pInvalidateRect.Call(uintptr(hwndMain), 0, 1)
 	outDir := strings.TrimSpace(text(edOutput))
 	if len(r.Errors) > 0 {
 		_ = os.WriteFile(filepath.Join(outDir, "OBJ2PNG_errors.txt"), []byte(strings.Join(r.Errors, "\r\n")+"\r\n"), 0644)
@@ -1252,7 +1292,6 @@ func layoutControls(cw, ch int32) {
 	// Bottom action bar.
 	move(lblStatusTitle, actionPanel.Left+20, actionPanel.Top+13, 92, 20)
 	move(status, actionPanel.Left+110, actionPanel.Top+12, actionPanel.Right-actionPanel.Left-130, 24)
-	move(progress, actionPanel.Left+20, actionPanel.Top+42, actionPanel.Right-actionPanel.Left-40, 14)
 	ay := actionPanel.Top + 68
 	aw := actionPanel.Right - actionPanel.Left - 40
 	renderW := int32(float64(aw) * 0.50)
@@ -1284,6 +1323,20 @@ func paintWindow(hwnd syscall.Handle) {
 	pLineTo.Call(hdc, uintptr(clientW-24), 86)
 	pSelectObject.Call(hdc, old)
 	pDeleteObject.Call(pen)
+
+	batchMu.Lock()
+	done := batchProgressDone
+	total := batchProgressTotal
+	batchMu.Unlock()
+	if total > 0 && done >= 0 {
+		barRect := RECT{actionPanel.Left+20, actionPanel.Top+42, actionPanel.Right-20, actionPanel.Top+56}
+		gradientFillRect(syscall.Handle(hdc), barRect, rgb(30, 37, 59), rgb(20, 27, 48))
+		pw := (barRect.Right - barRect.Left) * int32(done) / int32(total)
+		if pw > 0 {
+			progRect := RECT{barRect.Left, barRect.Top, barRect.Left + pw, barRect.Bottom}
+			gradientFillRect(syscall.Handle(hdc), progRect, rgb(64, 210, 255), rgb(21, 142, 237))
+		}
+	}
 }
 
 func applyDarkTitleBar(hwnd syscall.Handle) {
@@ -1368,11 +1421,6 @@ func wndProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
 		// Action bar
 		lblStatusTitle = createLabel("STATUS", fontBadge, rgb(119, 224, 255))
 		status = createLabel("", fontSmall, rgb(210, 221, 240))
-		progress = create("msctls_progress32", "", WS_CHILD|WS_VISIBLE, 0, 0, 10, 10, 0)
-		send(progress, PBM_SETRANGE32, 0, 1)
-		send(progress, PBM_SETPOS, 0, 0)
-		send(progress, PBM_SETBARCOLOR, 0, uintptr(rgb(64, 210, 255)))
-		send(progress, PBM_SETBKCOLOR, 0, uintptr(rgb(30, 37, 59)))
 		btnRender = createButton("RENDER", ID_RENDER, rgb(41, 221, 158), rgb(14, 134, 120), rgb(111, 255, 203))
 		btnCancel = createButton("CANCEL", ID_CANCEL, rgb(239, 87, 116), rgb(159, 41, 79), rgb(255, 142, 166))
 		btnOpenFolder = createButton("OPEN OUTPUT FOLDER", ID_OPEN_FOLDER, rgb(147, 92, 255), rgb(86, 55, 196), rgb(190, 151, 255))
