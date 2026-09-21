@@ -323,6 +323,14 @@ func RenderOBJ(inPath, outPath string, opt RenderOptions) error {
 	scl := cam.scale * float64(ss)
 	cx, cy := float64(W)/2, float64(H)/2
 	pix := make([]uint8, W*H*4)
+	if !opt.BackgroundTransparent {
+		for i := 0; i < len(pix); i += 4 {
+			pix[i]   = 25
+			pix[i+1] = 25
+			pix[i+2] = 30
+			pix[i+3] = 255
+		}
+	}
 	depth := make([]float64, W*H)
 	for i := range depth {
 		depth[i] = math.Inf(-1)
@@ -426,12 +434,16 @@ func RenderOBJ(inPath, outPath string, opt RenderOptions) error {
 	}
 
 	out := image.NewNRGBA(image.Rect(0, 0, opt.Width, opt.Height))
+	bgAlpha := uint8(0)
+	if !opt.BackgroundTransparent {
+		bgAlpha = 255
+	}
 	if ss == 1 {
 		for y := 0; y < opt.Height; y++ {
 			for x := 0; x < opt.Width; x++ {
 				i := (y*W + x) * 4
 				if pix[i+3] == 0 {
-					out.SetNRGBA(x, y, color.NRGBA{0, 0, 0, 0})
+					out.SetNRGBA(x, y, color.NRGBA{25, 25, 30, bgAlpha})
 				} else {
 					out.SetNRGBA(x, y, color.NRGBA{pix[i], pix[i+1], pix[i+2], pix[i+3]})
 				}
@@ -468,7 +480,7 @@ func RenderOBJ(inPath, outPath string, opt RenderOptions) error {
 							}
 						}
 						if sa == 0 {
-							out.SetNRGBA(x, y, color.NRGBA{0, 0, 0, 0})
+							out.SetNRGBA(x, y, color.NRGBA{25, 25, 30, bgAlpha})
 							continue
 						}
 						samples := ss * ss

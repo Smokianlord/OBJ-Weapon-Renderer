@@ -321,6 +321,9 @@ type AppSettings struct {
 	Mirror          bool   `json:"mirror"`
 	PreserveNormals bool   `json:"preserve_normals"`
 	Overwrite       bool   `json:"overwrite"`
+	Transparent     bool   `json:"transparent"`
+	Brightness      int    `json:"brightness"`
+	Contrast        int    `json:"contrast"`
 }
 
 type BatchResult struct {
@@ -338,13 +341,13 @@ type ButtonStyle struct {
 var (
 	hwndMain                                                             syscall.Handle
 	listModels, edOutput                                                 syscall.Handle
-	cbView, cbRes, cbAA                                                  syscall.Handle
-	ckMirror, ckOriginal, ckOverwrite                                    syscall.Handle
-	btnAddFiles, btnAddFolder, btnRemove, btnClear                       syscall.Handle
-	btnBrowseOutput, btnRender, btnCancel, btnOpenFolder                 syscall.Handle
-	lblHeaderTitle, lblHeaderSub, lblHeaderBadge                         syscall.Handle
+	cbView, cbRes, cbAA, cbBrightness, cbContrast                  syscall.Handle
+	ckMirror, ckOriginal, ckOverwrite, ckTransparent                 syscall.Handle
+	btnAddFiles, btnAddFolder, btnRemove, btnClear                   syscall.Handle
+	btnBrowseOutput, btnRender, btnCancel, btnOpenFolder             syscall.Handle
+	lblHeaderTitle, lblHeaderSub, lblHeaderBadge                     syscall.Handle
 	lblCount, lblQueueTitle, lblQueueHint, lblOutputTitle, lblOutputHint syscall.Handle
-	lblSettingsTitle, lblView, lblRes, lblAA, lblQuality, lblStatusTitle syscall.Handle
+	lblSettingsTitle, lblView, lblRes, lblAA, lblBrightness, lblContrast, lblQuality, lblStatusTitle syscall.Handle
 	status, progress                                                     syscall.Handle
 
 	fontBody, fontTitle, fontSubtitle, fontSection, fontButton, fontSmall, fontBadge syscall.Handle
@@ -384,9 +387,12 @@ const (
 	ID_MIRROR      = 111
 	ID_ORIG        = 112
 	ID_OVERWRITE   = 113
-	ID_RENDER      = 114
-	ID_CANCEL      = 115
-	ID_OPEN_FOLDER = 116
+	ID_TRANSPARENT = 114
+	ID_BRIGHTNESS  = 115
+	ID_CONTRAST    = 116
+	ID_RENDER      = 117
+	ID_CANCEL      = 118
+	ID_OPEN_FOLDER = 119
 )
 
 func rgb(r, g, b uint32) uint32 { return r | (g << 8) | (b << 16) }
@@ -502,7 +508,7 @@ func defaultOutputFolder() string {
 }
 func loadSettings() AppSettings {
 	// v6 launches in max-quality mode by default. If an older install exists, only migrate the output folder.
-	s := AppSettings{OutputFolder: defaultOutputFolder(), View: 0, Resolution: 2, AA: 1, Mirror: true, PreserveNormals: true, Overwrite: true}
+	s := AppSettings{OutputFolder: defaultOutputFolder(), View: 0, Resolution: 2, AA: 1, Mirror: true, PreserveNormals: true, Overwrite: true, Transparent: true, Brightness: 1, Contrast: 1}
 	if b, err := os.ReadFile(settingsPath()); err == nil {
 		_ = json.Unmarshal(b, &s)
 	} else if b, err := os.ReadFile(oldSettingsPath()); err == nil {
@@ -523,6 +529,12 @@ func loadSettings() AppSettings {
 	if s.AA < 0 || s.AA > 1 {
 		s.AA = 1
 	}
+	if s.Brightness < 0 || s.Brightness > 2 {
+		s.Brightness = 1
+	}
+	if s.Contrast < 0 || s.Contrast > 2 {
+		s.Contrast = 1
+	}
 	return s
 }
 func readSettingsFromUI() AppSettings {
@@ -531,9 +543,12 @@ func readSettingsFromUI() AppSettings {
 	s.View = int(send(cbView, CB_GETCURSEL, 0, 0))
 	s.Resolution = int(send(cbRes, CB_GETCURSEL, 0, 0))
 	s.AA = int(send(cbAA, CB_GETCURSEL, 0, 0))
+	s.Brightness = int(send(cbBrightness, CB_GETCURSEL, 0, 0))
+	s.Contrast = int(send(cbContrast, CB_GETCURSEL, 0, 0))
 	s.Mirror = send(ckMirror, BM_GETCHECK, 0, 0) == BST_CHECKED
 	s.PreserveNormals = send(ckOriginal, BM_GETCHECK, 0, 0) == BST_CHECKED
 	s.Overwrite = send(ckOverwrite, BM_GETCHECK, 0, 0) == BST_CHECKED
+	s.Transparent = send(ckTransparent, BM_GETCHECK, 0, 0) == BST_CHECKED
 	return s
 }
 func saveSettings() {
@@ -906,6 +921,20 @@ func collectRenderOptions() (RenderOptions, string, bool, error) {
 	o.Mirror = send(ckMirror, BM_GETCHECK, 0, 0) == BST_CHECKED
 	o.UseOriginalNormals = send(ckOriginal, BM_GETCHECK, 0, 0) == BST_CHECKED
 	overwrite := send(ckOverwrite, BM_GETCHECK, 0, 0) == BST_CHECKED
+	o.BackgroundTransparent = send(ckTransparent, BM_GETCHECK, 0, 0) == BST_CHECKED
+	
+	switch int(send(cbBrightness, CB_GETCURSEL, 0, 0)) {
+	case 0: o.BaseGray = 60
+	case 2: o.BaseGray = 160
+	default: o.BaseGray = 108
+	}
+	
+	switch int(send(cbContrast, CB_GETCURSEL, 0, 0)) {
+	case 0: o.Contrast = 0.7
+	case 2: o.Contrast = 1.4
+	default: o.Contrast = 1.0
+	}
+	
 	return o, outDir, overwrite, nil
 }
 func makeOutputPaths(inputs []string, outDir string) []string {
@@ -1275,18 +1304,26 @@ func layoutControls(cw, ch int32) {
 	move(cbView, x, y, viewW, 190)
 	move(cbRes, x+viewW+colGap, y, resW, 190)
 
-	// Anti-aliasing gets its own full-width row so the selected text is never clipped.
-	y += 54
-	move(lblAA, x, y, wcol, 20)
+	// AA, Brightness, and Contrast in one row.
+	y += 50
+	colGap2 := int32(14)
+	thirdW := (wcol - 2*colGap2) / 3
+	move(lblAA, x, y, thirdW, 20)
+	move(lblBrightness, x+thirdW+colGap2, y, thirdW, 20)
+	move(lblContrast, x+2*(thirdW+colGap2), y, thirdW, 20)
 	y += 23
-	move(cbAA, x, y, wcol, 170)
+	move(cbAA, x, y, thirdW, 170)
+	move(cbBrightness, x+thirdW+colGap2, y, thirdW, 170)
+	move(cbContrast, x+2*(thirdW+colGap2), y, thirdW, 170)
 
-	// Independent option rows with generous spacing.
-	y += 54
+	// Independent option rows with slightly tighter spacing.
+	y += 50
+	move(ckTransparent, x, y, wcol, 25)
+	y += 28
 	move(ckMirror, x, y, wcol, 25)
-	y += 34
+	y += 28
 	move(ckOriginal, x, y, wcol, 25)
-	y += 34
+	y += 28
 	move(ckOverwrite, x, y, wcol, 25)
 
 	// Bottom action bar.
@@ -1403,6 +1440,8 @@ func wndProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
 		lblView = createLabel("View", fontSmall, rgb(191, 204, 227))
 		lblRes = createLabel("Resolution", fontSmall, rgb(191, 204, 227))
 		lblAA = createLabel("Anti-aliasing", fontSmall, rgb(191, 204, 227))
+		lblBrightness = createLabel("Base Brightness", fontSmall, rgb(191, 204, 227))
+		lblContrast = createLabel("Contrast", fontSmall, rgb(191, 204, 227))
 		cbView = create("COMBOBOX", "", WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL, 0, 0, 10, 10, ID_VIEW)
 		addCombo(cbView, []string{"Auto Side", "Look along X", "Look along Y", "Look along Z"}, settings.View)
 		applyExplorerTheme(cbView)
@@ -1412,9 +1451,17 @@ func wndProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
 		cbAA = create("COMBOBOX", "", WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL, 0, 0, 10, 10, ID_AA)
 		addCombo(cbAA, []string{"1x  •  Fast", "2x SSAA  •  MAX"}, settings.AA)
 		applyExplorerTheme(cbAA)
+		cbBrightness = create("COMBOBOX", "", WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL, 0, 0, 10, 10, ID_BRIGHTNESS)
+		addCombo(cbBrightness, []string{"Low (Darker)", "Normal", "High (Brighter)"}, settings.Brightness)
+		applyExplorerTheme(cbBrightness)
+		cbContrast = create("COMBOBOX", "", WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL, 0, 0, 10, 10, ID_CONTRAST)
+		addCombo(cbContrast, []string{"Low", "Normal", "High"}, settings.Contrast)
+		applyExplorerTheme(cbContrast)
+		ckTransparent = create("BUTTON", "Transparent PNG background", WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX, 0, 0, 10, 10, ID_TRANSPARENT)
 		ckMirror = create("BUTTON", "Mirror horizontally", WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX, 0, 0, 10, 10, ID_MIRROR)
 		ckOriginal = create("BUTTON", "Preserve OBJ vertex normals  (recommended)", WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX, 0, 0, 10, 10, ID_ORIG)
 		ckOverwrite = create("BUTTON", "Overwrite existing PNGs", WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX, 0, 0, 10, 10, ID_OVERWRITE)
+		setCheck(ckTransparent, settings.Transparent)
 		setCheck(ckMirror, settings.Mirror)
 		setCheck(ckOriginal, settings.PreserveNormals)
 		setCheck(ckOverwrite, settings.Overwrite)
