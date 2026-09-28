@@ -9,7 +9,7 @@ Example from Linux with Go installed:
 
 ```bash
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-H=windowsgui -s -w" -o app_raw.exe .
-python embed_pe_icon.py app_raw.exe obj2png_studio.ico OBJ2PNG_Studio_Pro_v1.0.0_Windows_x64.exe
+python embed_pe_icon.py app_raw.exe obj2png_studio.ico "OBJ2PNG Studio Pro.exe"
 ```
 
 Do not distribute `app_raw.exe`; it has no Explorer executable icon resource.

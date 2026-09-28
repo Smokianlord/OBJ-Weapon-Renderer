@@ -18,5 +18,16 @@ __pycache__/
 # Editors / OS
 .vscode/
 .idea/
+*.swp
+*~
 .DS_Store
 Thumbs.db
+
+# Archives & Temporary files
+*.zip
+*.tar.gz
+*.7z
+*.tmp
+*.bak
+*.log
+
