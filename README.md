@@ -23,8 +23,3 @@ Get the exe from [Releases](https://github.com/Smokianlord/OBJ-Weapon-Renderer/r
 ## Build
 
 See [BUILD_WINDOWS.md](BUILD_WINDOWS.md).
-
-## License
-
-MIT, see [LICENSE](LICENSE).
-
